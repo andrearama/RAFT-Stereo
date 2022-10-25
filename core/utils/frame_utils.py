@@ -7,6 +7,7 @@ import imageio
 import cv2
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
+from matplotlib import pyplot as plt
 
 TAG_CHAR = np.array([202021.25], np.float32)
 
@@ -120,6 +121,16 @@ def readFlowKITTI(filename):
     flow, valid = flow[:, :, :2], flow[:, :, 2]
     flow = (flow - 2**15) / 64.0
     return flow, valid
+
+
+def Gated(filename):
+    focal_length = 2840.562197
+    baseline = 658.280549/2840.562197
+    depth = np.load(filename)["arr_0"]
+    disp = focal_length * baseline / (depth + 1e-9)
+    disp[depth == 0.0] = 0
+    valid = (disp > 0.0 ) * (depth > 0.0)
+    return disp, valid
 
 def readDispKITTI(filename):
     disp = cv2.imread(filename, cv2.IMREAD_ANYDEPTH) / 256.0

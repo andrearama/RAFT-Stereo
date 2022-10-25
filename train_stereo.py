@@ -134,7 +134,9 @@ def train(args):
     model = nn.DataParallel(RAFTStereo(args))
     print("Parameter Count: %d" % count_parameters(model))
 
-    train_loader = datasets.fetch_dataloader(args)
+    use_passive_gated = True # if false use RGB
+
+    train_loader = datasets.fetch_dataloader(args, use_passive_gated = use_passive_gated)
     optimizer, scheduler = fetch_optimizer(args, model)
     total_steps = 0
     logger = Logger(model, scheduler)
@@ -150,7 +152,7 @@ def train(args):
     model.train()
     model.module.freeze_bn() # We keep BatchNorm frozen
 
-    validation_frequency = 10000
+    validation_frequency = 500
 
     scaler = GradScaler(enabled=args.mixed_precision)
 
@@ -163,7 +165,7 @@ def train(args):
             image1, image2, flow, valid = [x.cuda() for x in data_blob]
 
             assert model.training
-            flow_predictions = model(image1, image2, iters=args.train_iters)
+            flow_predictions = model(image1=image1, image2=image2, iters=args.train_iters)
             assert model.training
 
             loss, metrics = sequence_loss(flow_predictions, flow, valid)
@@ -185,9 +187,9 @@ def train(args):
                 logging.info(f"Saving file {save_path.absolute()}")
                 torch.save(model.state_dict(), save_path)
 
-                results = validate_things(model.module, iters=args.valid_iters)
+                # results = validate_things(model.module, iters=args.valid_iters)
 
-                logger.write_dict(results)
+                # logger.write_dict(results)
 
                 model.train()
                 model.module.freeze_bn()
@@ -213,7 +215,7 @@ def train(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='raft-stereo', help="name your experiment")
+    parser.add_argument('--name', default='raft-stereo-finetuned-ourdata', help="name your experiment")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
 

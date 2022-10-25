@@ -1,4 +1,3 @@
-# Data loading based on https://github.com/NVIDIA/flownet2-pytorch
 
 import numpy as np
 import torch
@@ -13,6 +12,7 @@ import random
 from pathlib import Path
 from glob import glob
 import os.path as osp
+import cv2
 
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
@@ -72,8 +72,23 @@ class StereoDataset(data.Dataset):
 
         img1 = np.array(img1).astype(np.uint8)
         img2 = np.array(img2).astype(np.uint8)
-
         disp = np.array(disp).astype(np.float32)
+
+        if len(img1.shape) == 2 and img1.shape[0] == 720 and img1.shape[1] == 1280 :
+            img1 = cv2.resize(img1, (1280, 704) ) #needs to be /32
+            img1 = np.stack([img1]*3, axis = -1)
+
+            img2 = cv2.resize(img2, (1280, 704) ) #needs to be /32
+            img2 = np.stack([img2]*3, axis = -1)
+
+            disp = cv2.resize(disp, (1280, 704) )
+            valid = cv2.resize(disp, (1280, 704), interpolation = cv2.INTER_NEAREST )
+        else:
+            if  img1.shape[0] % 32 != 0 or img2.shape[1] % 32 != 0 :
+                throw_error
+            print("sss",img1.shape)
+            asdadad
+
         flow = np.stack([-disp, np.zeros_like(disp)], axis=-1)
 
         # grayscale images
@@ -84,6 +99,7 @@ class StereoDataset(data.Dataset):
             img1 = img1[..., :3]
             img2 = img2[..., :3]
 
+        #print("-->",img1.shape, img2.shape, disp.shape, flow.shape, valid.shape)
         if self.augmentor is not None:
             if self.sparse:
                 img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
@@ -279,8 +295,48 @@ class Middlebury(StereoDataset):
                 self.image_list += [ [img1, img2] ]
                 self.disparity_list += [ disp ]
 
+class Gated(StereoDataset):
+    def __init__(self, aug_params=None, root='/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3', 
+                 use_passive_gated = False,   indexes_file = "/home/dense/Documents/andrea/GATED/train_gatedstereo.txt" ):
+        super(Gated, self).__init__(aug_params, sparse=True, reader=frame_utils.Gated)
+        assert os.path.exists(root)
+
+        # Create set of training images:
+        set_training = set()
+        with open(indexes_file) as file:
+            lines = file.readlines()
+            lines = [line.rstrip() for line in lines]    
+            for l in lines : 
+                day, ind = l.split(",")
+                set_training.add( (day,ind) )
+
+        folders = glob(root+"/*/")
+        for folder in folders : 
+            if not use_passive_gated :
+                disps_p = folder+"/cam_stereo/left/lidar_vls128_projected/*.npz"
+                left_p = disps_p.replace("/lidar_vls128_projected/", "/image_rect/").replace(".npz",".png")
+                right_p = left_p.replace("/left/", "/right/")
+            else:
+                type_gated = "type7"
+                disps_p = folder + "/framegrabber/left/lidar_vls128_projected/*.npz"
+                left_p = folder + "/framegrabber/left/bwv/"+type_gated+"/image_rect8/*.png"
+                right_p = folder + "/framegrabber/right/bwv/"+type_gated+"/image_rect8/*.png"
+
+            image1_list = sorted(glob(left_p))
+            image2_list = sorted(glob(right_p) )
+            disp_list = sorted(glob( disps_p ))
+
+            if len(image1_list) == len(disp_list) :
+                for img1, img2, disp in zip(image1_list, image2_list, disp_list):
+                    #Check if it is in training set: 
+                    day = img1.split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
+                    ind = img1.split("/")[-1].split("_")[0]
+                    if (day,ind) in set_training : 
+                        self.image_list += [ [img1, img2] ]
+                        self.disparity_list += [ disp ]
+
   
-def fetch_dataloader(args):
+def fetch_dataloader(args, use_passive_gated):
     """ Create the data loader for the corresponding trainign set """
 
     aug_params = {'crop_size': args.image_size, 'min_scale': args.spatial_scale[0], 'max_scale': args.spatial_scale[1], 'do_flip': False, 'yjitter': not args.noyjitter}
@@ -293,7 +349,11 @@ def fetch_dataloader(args):
 
     train_dataset = None
     for dataset_name in args.train_datasets:
-        if dataset_name.startswith("middlebury_"):
+        if True: 
+            print("Dataset hardcoded to ours gated!")
+            new_dataset = Gated(aug_params, use_passive_gated = use_passive_gated)
+
+        elif dataset_name.startswith("middlebury_"):
             new_dataset = Middlebury(aug_params, split=dataset_name.replace('middlebury_',''))
         elif dataset_name == 'sceneflow':
             clean_dataset = SceneFlowDatasets(aug_params, dstype='frames_cleanpass')

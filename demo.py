@@ -11,12 +11,28 @@ from raft_stereo import RAFTStereo
 from utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
-
+import os
+import cv2
 
 DEVICE = 'cuda'
+def compute_diff_desp_lidar(disp, gt_lidar):
+    focal_length = 2840.562197
+    baseline = 658.280549/2840.562197
+    depth = focal_length * baseline / (disp + 1e-9)
+    valid = (gt_lidar > 3 ).astype(np.float32)
+    valid *= (gt_lidar < 200 ).astype(np.float32)
+    # dd = valid*gt_lidar + (1-valid)*depth
+    # plt.imshow(dd)
+    # plt.show()
 
-def load_image(imfile):
+    mae = np.sum(np.abs(depth - gt_lidar)*valid) / np.sum(valid)    
+    return mae
+
+def load_image(imfile, stack_3 = False):
     img = np.array(Image.open(imfile)).astype(np.uint8)
+    if stack_3 : 
+        img = cv2.resize(img, (1280, 704) ) #needs to be /32
+        img = np.stack([img]*3, axis = -1)
     img = torch.from_numpy(img).permute(2, 0, 1).float()
     return img[None].to(DEVICE)
 
@@ -28,35 +44,112 @@ def demo(args):
     model.to(DEVICE)
     model.eval()
 
-    output_directory = Path(args.output_directory)
-    output_directory.mkdir(exist_ok=True)
+    indexes_file = "/home/dense/Documents/andrea/GATED/test_gatedstereo.txt"
+    with open(indexes_file) as file:
+        lines = file.readlines()
+        lines = [line.rstrip() for line in lines]    
+    
+    # get input
+    USE_GATED = True
+    print("start getting imgs paths")
+    img_names = []
+    gt_names = []
+    root_folder = "/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3/"
+    for l in lines : 
+        day, ind = l.split(",")
+        if not USE_GATED : #USE RGB
+            full_path = sorted(glob.glob(root_folder + day + "/cam_stereo/left/image_rect/"+ind+"*.png"))
+            full_path_right = sorted(glob.glob(root_folder + day + "/cam_stereo/right/image_rect/"+ind+"*.png"))
+            gt_full_path = sorted(glob.glob(root_folder + day + "/cam_stereo/left/lidar_vls128_projected/"+ind+"*.npz"))
+        else:
+            type_gated = "type7"
+            full_path = sorted(glob.glob(root_folder + day + "/framegrabber/left/bwv/"+type_gated+"/image_rect8/"+ind+"*.png"))
+            full_path_right = sorted(glob.glob(root_folder + day + "/framegrabber/right/bwv/"+type_gated+"/image_rect8/"+ind+"*.png"))
+            gt_full_path = sorted(glob.glob(root_folder + day + "/framegrabber/left/lidar_vls128_projected/"+ind+"*.npz"))
+
+        
+        print(root_folder + day + "/cam_stereo/left/image_rect/"+ind+"*.png")
+        if len(full_path) == 1 and (len(gt_full_path) == 1) and len(full_path_right) == 1:
+            full_path = full_path[0]
+            img_names.append([full_path,full_path_right[0],day])
+            gt_names.append(gt_full_path[0])
+        else:
+            pass#error
+
 
     with torch.no_grad():
-        left_images = sorted(glob.glob(args.left_imgs, recursive=True))
-        right_images = sorted(glob.glob(args.right_imgs, recursive=True))
-        print(f"Found {len(left_images)} images. Saving files to {output_directory}/")
+        MAE_v = []
+        for img_name_day, gt_lidar in tqdm(zip(img_names, gt_names)):
+            img_name, img_name_right, day = img_name_day
 
-        for (imfile1, imfile2) in tqdm(list(zip(left_images, right_images))):
-            image1 = load_image(imfile1)
-            image2 = load_image(imfile2)
+            if os.path.isdir(img_name):
+                continue
+
+            print("processing",img_name )
+            print("gt",gt_lidar )
+            image1 = load_image(img_name, stack_3=USE_GATED)
+            image2 = load_image(img_name_right, stack_3=USE_GATED)
+
+            depth_gt = np.load(gt_lidar)["arr_0"]
+            if USE_GATED :
+                depth_gt = cv2.resize(depth_gt, (1280, 704) ) #needs to be /32
 
             padder = InputPadder(image1.shape, divis_by=32)
             image1, image2 = padder.pad(image1, image2)
 
             _, flow_up = model(image1, image2, iters=args.valid_iters, test_mode=True)
-            file_stem = imfile1.split('/')[-2]
-            if args.save_numpy:
-                np.save(output_directory / f"{file_stem}.npy", flow_up.cpu().numpy().squeeze())
-            plt.imsave(output_directory / f"{file_stem}.png", -flow_up.cpu().numpy().squeeze(), cmap='jet')
+            final_disp = np.abs(flow_up.cpu().numpy().squeeze())
+            MAE = compute_diff_desp_lidar(final_disp, depth_gt)
+            MAE_v.append(MAE)
+            print("MAE",MAE)
 
+            plt.imshow(final_disp)
+            plt.show()             
+            asdasd
+            #continue
+
+            model_type = args.restore_ckpt.split("/")[-1].replace(".pth","")
+            output_path = "/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3"
+
+            path_path = os.path.join(output_path,day,"cam_stereo","left", model_type)
+            if not os.path.isdir( path_path ) : 
+                os.mkdir( path_path )
+                
+            if not os.path.isdir(os.path.join(path_path,"visualization") ) : 
+                os.mkdir(os.path.join(path_path,"visualization") )
+
+            if not os.path.isdir(os.path.join(path_path,"npy") ) : 
+                os.mkdir(os.path.join(path_path,"npy") )
+                
+            filename = os.path.join(
+                path_path,"visualization", os.path.splitext(os.path.basename(img_name))[0]
+            )+".png"
+
+            print("saving:",filename)
+
+            focal_length = 2840.562197
+            baseline = 658.280549/2840.562197
+            depth = focal_length * baseline / (final_disp + 1e-9)
+
+            # plt.imshow(depth)
+            # plt.show()           
+
+            np.save(filename.replace("/visualization/","/npy/").replace(".png",".npy"), depth)
+            plt.imsave(filename, depth , cmap='jet')
+            
+    print("AVG MAGE:",sum(MAE_v)/len(MAE_v) )        
 
 if __name__ == '__main__':
+
+    # left = '/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3/2022-10-12_15-25-15/cam_stereo/left/image_rect/01449_1665588464987378730.png'
+    # right = left.replace("/left/","/right/")
+
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--restore_ckpt', help="restore checkpoint", required=True)
     parser.add_argument('--save_numpy', action='store_true', help='save output as numpy arrays')
-    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="datasets/Middlebury/MiddEval3/testH/*/im0.png")
-    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="datasets/Middlebury/MiddEval3/testH/*/im1.png")
-    parser.add_argument('--output_directory', help="directory to save output", default="demo_output")
+    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default=None )
+    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default=None )
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
     parser.add_argument('--valid_iters', type=int, default=32, help='number of flow-field updates during forward pass')
 

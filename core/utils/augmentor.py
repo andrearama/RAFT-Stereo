@@ -197,7 +197,7 @@ class SparseFlowAugmentor:
         self.v_flip_prob = 0.1
 
         # photometric augmentation params
-        self.photo_aug = Compose([ColorJitter(brightness=0.3, contrast=0.3, saturation=saturation_range, hue=0.3/3.14), AdjustGamma(*gamma)])
+        self.photo_aug = Compose([AdjustGamma(*gamma)])
         self.asymmetric_color_aug_prob = 0.2
         self.eraser_aug_prob = 0.5
         
