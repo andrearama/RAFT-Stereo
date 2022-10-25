@@ -120,7 +120,7 @@ class BottleneckBlock(nn.Module):
         return self.relu(x+y)
 
 class BasicEncoder(nn.Module):
-    def __init__(self, output_dim=128, norm_fn='batch', dropout=0.0, downsample=3):
+    def __init__(self, output_dim=128, norm_fn='batch', dropout=0.0, downsample=3, data_modality="RGB"):
         super(BasicEncoder, self).__init__()
         self.norm_fn = norm_fn
         self.downsample = downsample
@@ -137,7 +137,11 @@ class BasicEncoder(nn.Module):
         elif self.norm_fn == 'none':
             self.norm1 = nn.Sequential()
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 + (downsample > 2), padding=3)
+        if data_modality == "All Gated" :
+            channels_in = 5
+        else:
+            channels_in = 3
+        self.conv1 = nn.Conv2d(channels_in, 64, kernel_size=7, stride=1 + (downsample > 2), padding=3)
         self.relu1 = nn.ReLU(inplace=True)
 
         self.in_planes = 64
@@ -197,7 +201,7 @@ class BasicEncoder(nn.Module):
         return x
 
 class MultiBasicEncoder(nn.Module):
-    def __init__(self, output_dim=[128], norm_fn='batch', dropout=0.0, downsample=3):
+    def __init__(self, output_dim=[128], norm_fn='batch', dropout=0.0, downsample=3, data_modality="RGB"):
         super(MultiBasicEncoder, self).__init__()
         self.norm_fn = norm_fn
         self.downsample = downsample
@@ -214,7 +218,11 @@ class MultiBasicEncoder(nn.Module):
         elif self.norm_fn == 'none':
             self.norm1 = nn.Sequential()
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=1 + (downsample > 2), padding=3)
+        if data_modality == "All Gated" :
+            channels_in = 5
+        else:
+            channels_in = 3
+        self.conv1 = nn.Conv2d(channels_in, 64, kernel_size=7, stride=1 + (downsample > 2), padding=3)
         self.relu1 = nn.ReLU(inplace=True)
 
         self.in_planes = 64

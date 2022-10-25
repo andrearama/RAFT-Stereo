@@ -14,13 +14,21 @@ from glob import glob
 import os.path as osp
 import cv2
 from matplotlib import pyplot as plt
+import copy
 
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
 
+def check_lists_same_len(lists):
+    it = iter(lists)
+    the_len = len(next(it))
+    if not all(len(l) == the_len for l in it):
+        return False
+    else:
+        return True
 
 class StereoDataset(data.Dataset):
-    def __init__(self, aug_params=None, sparse=False, reader=None):
+    def __init__(self, aug_params=None, sparse=False, reader=None, use_passive_gated = False, use_all_gated = False):
         self.augmentor = None
         self.sparse = sparse
         self.img_pad = aug_params.pop("img_pad", None) if aug_params is not None else None
@@ -34,7 +42,8 @@ class StereoDataset(data.Dataset):
             self.disparity_reader = frame_utils.read_gen
         else:
             self.disparity_reader = reader        
-
+        self.use_all_gated = use_all_gated 
+        self.use_passive_gated = use_passive_gated
         self.is_test = False
         self.init_seed = False
         self.flow_list = []
@@ -68,40 +77,51 @@ class StereoDataset(data.Dataset):
         else:
             valid = disp < 512
 
-        img1 = frame_utils.read_gen(self.image_list[index][0])
-        img2 = frame_utils.read_gen(self.image_list[index][1])
+        if not self.use_all_gated :     
+            img1 = frame_utils.read_gen(self.image_list[index][0])
+            img2 = frame_utils.read_gen(self.image_list[index][1])
+        else:
+            img1 = np.stack([ frame_utils.read_gen(self.image_list[index][0][i]) for i in range(5) ], axis = -1 )
+            img2 = np.stack([ frame_utils.read_gen(self.image_list[index][1][i]) for i in range(5) ], axis = -1 )
 
         img1 = np.array(img1).astype(np.uint8)
         img2 = np.array(img2).astype(np.uint8)
+
         disp = np.array(disp).astype(np.float32)
 
-        if len(img1.shape) == 2 and img1.shape[0] == 720 and img1.shape[1] == 1280 :
-            img1 = cv2.resize(img1, (1280, 704) ) #needs to be /32
-            img1 = np.stack([img1]*3, axis = -1)
-
-            img2 = cv2.resize(img2, (1280, 704) ) #needs to be /32
-            img2 = np.stack([img2]*3, axis = -1)
-
-            disp = cv2.resize(disp, (1280, 704) , interpolation = cv2.INTER_NEAREST )            
-            valid = disp > 0.0 
-                               
+        if img1.shape[0] == 720 and img1.shape[1] == 1280 :
+            method = "crop"
+            if method == "resize":
+                img1 = cv2.resize(img1, (1280, 704) ) #needs to be /32
+                img2 = cv2.resize(img2, (1280, 704) ) #needs to be /32
+                disp = cv2.resize(disp, (1280, 704) , interpolation = cv2.INTER_NEAREST )            
+                valid = disp > 0.0 
+            elif method == "crop":
+                img1 = img1[8:-8]
+                img2 = img2[8:-8]
+                disp = disp[8:-8]
+                valid = valid[8:-8]                             
         else:
             if  img1.shape[0] % 32 != 0 or img2.shape[1] % 32 != 0 :
                 throw_error
+
+        if self.use_passive_gated :
+            assert len(img1.shape) == 2 
+            img1 = np.stack([img1]*3, axis = -1)        
+            img2 = np.stack([img2]*3, axis = -1)                
 
 
         flow = np.stack([-disp, np.zeros_like(disp)], axis=-1)
 
         # grayscale images
         if len(img1.shape) == 2:
+            print("Imgs are GrayScale! Comment me out or fix me if its ok")
             img1 = np.tile(img1[...,None], (1, 1, 3))
             img2 = np.tile(img2[...,None], (1, 1, 3))
-        else:
-            img1 = img1[..., :3]
-            img2 = img2[..., :3]
+
 
         #print("-->",img1.shape, img2.shape, disp.shape, flow.shape, valid.shape)
-        if self.augmentor is not None:
+        if (self.augmentor is not None) and (not self.use_all_gated) and (not self.use_passive_gated) :
             if self.sparse:
                 img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
             else:
@@ -298,8 +318,8 @@ class Middlebury(StereoDataset):
 
 class Gated(StereoDataset):
     def __init__(self, aug_params=None, root='/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3', 
-                 use_passive_gated = False,   indexes_file = "/home/dense/Documents/andrea/GATED/train_gatedstereo.txt" ):
-        super(Gated, self).__init__(aug_params, sparse=True, reader=frame_utils.Gated)
+                 use_passive_gated = False, use_all_gated = False, indexes_file = "/home/dense/Documents/andrea/GATED/train_gatedstereo.txt" ):
+        super(Gated, self).__init__(aug_params, sparse=True, reader=frame_utils.Gated, use_passive_gated = use_passive_gated, use_all_gated=use_all_gated)
         assert os.path.exists(root)
 
         # Create set of training images:
@@ -313,34 +333,66 @@ class Gated(StereoDataset):
 
         folders = glob(root+"/*/")
         for folder in folders : 
-            if not use_passive_gated :
-                disps_p = folder+"/cam_stereo/left/lidar_vls128_projected/*.npz"
-                left_p = disps_p.replace("/lidar_vls128_projected/", "/image_rect/").replace(".npz",".png")
-                right_p = left_p.replace("/left/", "/right/")
-            else:
-                type_gated = "type7"
-                disps_p = folder + "/framegrabber/left/lidar_vls128_projected/*.npz"
-                left_p = folder + "/framegrabber/left/bwv/"+type_gated+"/image_rect8/*.png"
-                right_p = folder + "/framegrabber/right/bwv/"+type_gated+"/image_rect8/*.png"
+            image1_list = []
+            image2_list = []
+            if use_all_gated:
+                for type_gated in ["type6","type7","type8","type9","type10"] :
+                    left_p = folder + "/framegrabber/left/bwv/"+type_gated+"/image_rect8/*.png"
+                    right_p = folder + "/framegrabber/right/bwv/"+type_gated+"/image_rect8/*.png"
+                    image1_list.append(  sorted(glob(left_p)) )
+                    image2_list.append( sorted(glob(right_p)) )
 
-            image1_list = sorted(glob(left_p))
-            image2_list = sorted(glob(right_p) )
-            disp_list = sorted(glob( disps_p ))
+                disp_list = sorted(glob( folder + "/framegrabber/left/lidar_vls128_projected/*.npz") )
 
-            if len(image1_list) == len(disp_list) and  len(image1_list) == len(image2_list)  :
-                for img1, img2, disp in zip(image1_list, image2_list, disp_list):
-                    #Check if it is in training set: 
-                    day = img1.split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
-                    ind = img1.split("/")[-1].split("_")[0]
-                    if (day,ind) in set_training : 
-                        self.image_list += [ [img1, img2] ]
-                        self.disparity_list += [ disp ]
+                tot = image1_list + image2_list + [disp_list]
+                
+                if check_lists_same_len(image1_list + image2_list + [disp_list]) :
+                    for i in range(len(image1_list[0])) :
+                        image_list_left = [type_l[i] for type_l in image1_list ] 
+                        image_list_right = [type_r[i] for type_r in image2_list ] 
+                        disp = disp_list[i]
+
+                        day = image_list_left[0].split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
+                        ind = image_list_left[0].split("/")[-1].split("_")[0]
+                        if (day,ind) in set_training : 
+                            self.image_list += copy.deepcopy([ [image_list_left, image_list_right] ])
+                            self.disparity_list += [ disp ]
+                else: 
+                    print("No exact match in dataset:", len(disp_list) ,  len(image1_list[0]) , len(image2_list[0]) )
+
+
+
             else:
-                print("No exact match in dataset:", len(disp_list) ,  len(image1_list) , len(image2_list) )
+                if use_passive_gated:
+                    type_gated = "type7"
+                    disps_p = folder + "/framegrabber/left/lidar_vls128_projected/*.npz"
+                    left_p = folder + "/framegrabber/left/bwv/"+type_gated+"/image_rect8/*.png"
+                    right_p = folder + "/framegrabber/right/bwv/"+type_gated+"/image_rect8/*.png"
+                else:
+                    disps_p = folder+"/cam_stereo/left/lidar_vls128_projected/*.npz"
+                    left_p = disps_p.replace("/lidar_vls128_projected/", "/image_rect/").replace(".npz",".png")
+                    right_p = left_p.replace("/left/", "/right/")
+
+                image1_list = sorted(glob(left_p))
+                image2_list = sorted(glob(right_p) )
+                disp_list = sorted(glob( disps_p ))
+
+                if len(image1_list) == len(disp_list) and  len(image1_list) == len(image2_list)  :
+                    for img1, img2, disp in zip(image1_list, image2_list, disp_list):
+                        #Check if it is in training set: 
+                        day = img1.split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
+                        ind = img1.split("/")[-1].split("_")[0]
+                        if (day,ind) in set_training : 
+                            self.image_list += [ [img1, img2] ]
+                            self.disparity_list += [ disp ]
+                else:
+                    print("No exact match in dataset:", len(disp_list) ,  len(image1_list) , len(image2_list) )
 
   
-def fetch_dataloader(args, use_passive_gated):
+def fetch_dataloader(args, data_modality ):
     """ Create the data loader for the corresponding trainign set """
+
+    assert data_modality in ["RGB", "1 Passive Gated", "All Gated"]
 
     aug_params = {'crop_size': args.image_size, 'min_scale': args.spatial_scale[0], 'max_scale': args.spatial_scale[1], 'do_flip': False, 'yjitter': not args.noyjitter}
     if hasattr(args, "saturation_range") and args.saturation_range is not None:
@@ -354,7 +406,7 @@ def fetch_dataloader(args, use_passive_gated):
     for dataset_name in args.train_datasets:
         if True: 
             print("Dataset hardcoded to ours gated!")
-            new_dataset = Gated(aug_params, use_passive_gated = use_passive_gated)
+            new_dataset = Gated(aug_params, use_passive_gated = data_modality== "1 Passive Gated", use_all_gated = data_modality=="All Gated" )
 
         elif dataset_name.startswith("middlebury_"):
             new_dataset = Middlebury(aug_params, split=dataset_name.replace('middlebury_',''))

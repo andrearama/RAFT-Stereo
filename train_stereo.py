@@ -130,23 +130,39 @@ class Logger:
 
 
 def train(args):
+    #data_modality either "RGB", "1 Passive Gated", "All Gated"
+    data_modality = "All Gated"
 
-    model = nn.DataParallel(RAFTStereo(args))
+    model = nn.DataParallel(RAFTStereo(args, data_modality))
     print("Parameter Count: %d" % count_parameters(model))
 
-    use_passive_gated = True # if false use RGB
-
-    train_loader = datasets.fetch_dataloader(args, use_passive_gated = use_passive_gated)
+    train_loader = datasets.fetch_dataloader(args, data_modality = data_modality)
     optimizer, scheduler = fetch_optimizer(args, model)
     total_steps = 0
     logger = Logger(model, scheduler)
 
     if args.restore_ckpt is not None:
         assert args.restore_ckpt.endswith(".pth")
-        logging.info("Loading checkpoint...")
-        checkpoint = torch.load(args.restore_ckpt)
-        model.load_state_dict(checkpoint, strict=True)
-        logging.info(f"Done loading checkpoint")
+        logging.info("Loading checkpoint...")        
+        if data_modality != "All Gated":
+            checkpoint = torch.load(args.restore_ckpt)
+            model.load_state_dict(checkpoint, strict=False)
+            logging.info(f"Done loading checkpoint")
+        elif False: #TODO: check this 
+            current_model_dict = model.state_dict()
+            loaded_state_dict = torch.load(args.restore_ckpt)
+            new_state_dict={}
+            for k,v in zip(current_model_dict.keys(), loaded_state_dict.values()) :
+                if v.size()==current_model_dict[k].size() :
+                    new_state_dict[k]  = v
+                    print("----")
+                else : 
+                    print("a",v.shape)
+                    print("b",current_model_dict[k].shape)
+                    
+                    new_state_dict[k] = current_model_dict[k]
+            model.load_state_dict(new_state_dict, strict=False)            
+            logging.info(f"Done loading checkpoint,some layers are not pretrained!!")
 
     model.cuda()
     model.train()
@@ -162,6 +178,7 @@ def train(args):
 
         for i_batch, (_, *data_blob) in enumerate(tqdm(train_loader)):
             optimizer.zero_grad()
+            data_blob[0].cuda()
             image1, image2, flow, valid = [x.cuda() for x in data_blob]
 
             assert model.training

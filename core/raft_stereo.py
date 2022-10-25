@@ -20,13 +20,13 @@ except:
             pass
 
 class RAFTStereo(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, data_modality):
         super().__init__()
         self.args = args
-        
+        self.data_modality = data_modality 
         context_dims = args.hidden_dims
 
-        self.cnet = MultiBasicEncoder(output_dim=[args.hidden_dims, context_dims], norm_fn="batch", downsample=args.n_downsample)
+        self.cnet = MultiBasicEncoder(output_dim=[args.hidden_dims, context_dims], norm_fn="batch", downsample=args.n_downsample, data_modality = self.data_modality)
         self.update_block = BasicMultiUpdateBlock(self.args, hidden_dims=args.hidden_dims)
 
         self.context_zqr_convs = nn.ModuleList([nn.Conv2d(context_dims[i], args.hidden_dims[i]*3, 3, padding=3//2) for i in range(self.args.n_gru_layers)])
@@ -36,7 +36,7 @@ class RAFTStereo(nn.Module):
                 ResidualBlock(128, 128, 'instance', stride=1),
                 nn.Conv2d(128, 256, 3, padding=1))
         else:
-            self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', downsample=args.n_downsample)
+            self.fnet = BasicEncoder(output_dim=256, norm_fn='instance', downsample=args.n_downsample, data_modality=data_modality)
 
     def freeze_bn(self):
         for m in self.modules():

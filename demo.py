@@ -13,6 +13,7 @@ from PIL import Image
 from matplotlib import pyplot as plt
 import os
 import cv2
+import logging 
 
 DEVICE = 'cuda'
 def compute_diff_desp_lidar(disp, gt_lidar):
@@ -30,6 +31,8 @@ def compute_diff_desp_lidar(disp, gt_lidar):
 
 def load_image(imfile, stack_3 = False):
     img = np.array(Image.open(imfile)).astype(np.uint8)
+    plt.imshow(img)
+    plt.show()
     if stack_3 : 
         img = cv2.resize(img, (1280, 704) ) #needs to be /32
         img = np.stack([img]*3, axis = -1)
@@ -37,9 +40,31 @@ def load_image(imfile, stack_3 = False):
     return img[None].to(DEVICE)
 
 def demo(args):
-    model = torch.nn.DataParallel(RAFTStereo(args), device_ids=[0])
-    model.load_state_dict(torch.load(args.restore_ckpt))
-
+    data_modality = "1 Passive Gated"
+    model = torch.nn.DataParallel(RAFTStereo(args, data_modality), device_ids=[0])
+    if args.restore_ckpt is not None:
+        assert args.restore_ckpt.endswith(".pth")
+        logging.info("Loading checkpoint...")        
+        if data_modality != "All Gated" and False:
+            checkpoint = torch.load(args.restore_ckpt)
+            model.load_state_dict(checkpoint, strict=False)
+            logging.info(f"Done loading checkpoint")
+        else:
+            current_model_dict = model.state_dict()
+            loaded_state_dict = torch.load(args.restore_ckpt)
+            new_state_dict={}
+            for k,v in zip(current_model_dict.keys(), loaded_state_dict.values()) :
+                if v.size()==current_model_dict[k].size() :
+                    new_state_dict[k]  = v
+                    print("----")
+                else : 
+                    print("a",v.shape)
+                    print("b",current_model_dict[k].shape)
+                    
+                    new_state_dict[k] = current_model_dict[k]
+            model.load_state_dict(new_state_dict, strict=False)            
+            logging.info(f"Done loading checkpoint,some layers are not pretrained!!")
+    asdads
     model = model.module
     model.to(DEVICE)
     model.eval()
