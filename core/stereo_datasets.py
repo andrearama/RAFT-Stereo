@@ -13,6 +13,7 @@ from pathlib import Path
 from glob import glob
 import os.path as osp
 import cv2
+from matplotlib import pyplot as plt
 
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
@@ -81,13 +82,13 @@ class StereoDataset(data.Dataset):
             img2 = cv2.resize(img2, (1280, 704) ) #needs to be /32
             img2 = np.stack([img2]*3, axis = -1)
 
-            disp = cv2.resize(disp, (1280, 704) )
-            valid = cv2.resize(disp, (1280, 704), interpolation = cv2.INTER_NEAREST )
+            disp = cv2.resize(disp, (1280, 704) , interpolation = cv2.INTER_NEAREST )            
+            valid = disp > 0.0 
+                               
         else:
             if  img1.shape[0] % 32 != 0 or img2.shape[1] % 32 != 0 :
                 throw_error
-            print("sss",img1.shape)
-            asdadad
+
 
         flow = np.stack([-disp, np.zeros_like(disp)], axis=-1)
 
@@ -326,7 +327,7 @@ class Gated(StereoDataset):
             image2_list = sorted(glob(right_p) )
             disp_list = sorted(glob( disps_p ))
 
-            if len(image1_list) == len(disp_list) :
+            if len(image1_list) == len(disp_list) and  len(image1_list) == len(image2_list)  :
                 for img1, img2, disp in zip(image1_list, image2_list, disp_list):
                     #Check if it is in training set: 
                     day = img1.split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
@@ -334,6 +335,8 @@ class Gated(StereoDataset):
                     if (day,ind) in set_training : 
                         self.image_list += [ [img1, img2] ]
                         self.disparity_list += [ disp ]
+            else:
+                print("No exact match in dataset:", len(disp_list) ,  len(image1_list) , len(image2_list) )
 
   
 def fetch_dataloader(args, use_passive_gated):
