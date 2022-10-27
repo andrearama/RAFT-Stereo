@@ -159,7 +159,7 @@ def demo(args):
             #continue
 
             model_type = args.restore_ckpt.split("/")[-1].replace(".pth","")
-            output_path = "/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3"
+            output_path = root_folder[:-1]
 
             if data_modality == "RGB":            
                 path_path = os.path.join(output_path,day,"cam_stereo","left", model_type)
@@ -206,10 +206,6 @@ def demo(args):
     print("AVG MAGE:",sum(MAE_v)/len(MAE_v) )        
 
 if __name__ == '__main__':
-
-    # left = '/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3/2022-10-12_15-25-15/cam_stereo/left/image_rect/01449_1665588464987378730.png'
-    # right = left.replace("/left/","/right/")
-
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--restore_ckpt', help="restore checkpoint", required=True)

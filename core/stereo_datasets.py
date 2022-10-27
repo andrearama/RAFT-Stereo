@@ -184,7 +184,7 @@ class StereoDataset(data.Dataset):
             img2 = img2.astype(np.float16)            
             max_percentage_dark = 1
             if  True:
-                date = self.image_list[index][0][0].split("202210_GatedStereoDatasetv3/")[-1]
+                date = self.image_list[index][0][0].split(self.last_folder_name+"/")[-1]
                 date = date.split("/framegrabber/left/")[0]
                 weight_darker = (random.random()-0.5) *max_percentage_dark
                 img1 = vary_ambient_light(img1, weight_darker, is_left=True, date=date)
@@ -421,10 +421,12 @@ class Middlebury(StereoDataset):
                 self.disparity_list += [ disp ]
 
 class Gated(StereoDataset):
-    def __init__(self, aug_params=None, root='/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3', 
+    def __init__(self, root, aug_params=None, 
                  use_passive_gated = False, use_all_gated = False, indexes_file = "/home/dense/Documents/andrea/GATED/train_gatedstereo.txt" ):
         super(Gated, self).__init__(aug_params, sparse=True, reader=frame_utils.Gated, use_passive_gated = use_passive_gated, use_all_gated=use_all_gated)
         assert os.path.exists(root)
+
+        self.last_folder_name = os.path.basename(os.path.normpath(root))
 
         # Create set of training images:
         set_training = set()
@@ -456,7 +458,7 @@ class Gated(StereoDataset):
                         image_list_right = [type_r[i] for type_r in image2_list ] 
                         disp = disp_list[i]
 
-                        day = image_list_left[0].split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
+                        day = image_list_left[0].split("/"+self.last_folder_name+"/")[1].split("/")[0]
                         ind = image_list_left[0].split("/")[-1].split("_")[0]
                         if (day,ind) in set_training : 
                             self.image_list += copy.deepcopy([ [image_list_left, image_list_right] ])
@@ -486,7 +488,7 @@ class Gated(StereoDataset):
                 if len(image1_list) == len(disp_list) and  len(image1_list) == len(image2_list)  :
                     for img1, img2, disp in zip(image1_list, image2_list, disp_list):
                         #Check if it is in training set: 
-                        day = img1.split("/202210_GatedStereoDatasetv3/")[1].split("/")[0]
+                        day = img1.split("/"+self.last_folder_name+"/")[1].split("/")[0]
                         ind = img1.split("/")[-1].split("_")[0]
                         if (day,ind) in set_training : 
                             self.image_list += [ [img1, img2] ]
@@ -495,7 +497,7 @@ class Gated(StereoDataset):
                     print("No exact match in dataset:", len(disp_list) ,  len(image1_list) , len(image2_list) )
 
   
-def fetch_dataloader(args, data_modality ):
+def fetch_dataloader(args, data_modality, root_dataset):
     """ Create the data loader for the corresponding trainign set """
 
     assert data_modality in ["RGB", "1 Passive Gated", "All Gated"]
@@ -512,7 +514,8 @@ def fetch_dataloader(args, data_modality ):
     for dataset_name in args.train_datasets:
         if True: 
             print("Dataset hardcoded to ours gated!")
-            new_dataset = Gated(aug_params, use_passive_gated = data_modality== "1 Passive Gated", use_all_gated = data_modality=="All Gated" )
+
+            new_dataset = Gated(aug_params=aug_params, root = root_dataset, use_passive_gated = data_modality== "1 Passive Gated", use_all_gated = data_modality=="All Gated" )
 
         elif dataset_name.startswith("middlebury_"):
             new_dataset = Middlebury(aug_params, split=dataset_name.replace('middlebury_',''))

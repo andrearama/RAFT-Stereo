@@ -137,7 +137,7 @@ def train(args):
     model = nn.DataParallel(RAFTStereo(args, data_modality))
     print("Parameter Count: %d" % count_parameters(model))
 
-    train_loader = datasets.fetch_dataloader(args, data_modality = data_modality)
+    train_loader = datasets.fetch_dataloader(args, data_modality = data_modality, root_dataset = args.root_dataset )
     optimizer, scheduler = fetch_optimizer(args, model)
     total_steps = 0
     logger = Logger(model, scheduler)
@@ -233,6 +233,10 @@ def train(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+
+    #parser.add_argument('--root_dataset', default='/projects/FHEIDE/gatedstereo/GatedStereoDataset', help="dataset root")
+    parser.add_argument('--root_dataset', default='/external/10g/dense2/fs1/datasets/202210_GatedStereoDatasetv3', help="dataset root")
+
     parser.add_argument('--name', default='raft-stereo-finetuned-ourdata', help="name your experiment")
     parser.add_argument('--restore_ckpt', help="restore checkpoint")
     parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
