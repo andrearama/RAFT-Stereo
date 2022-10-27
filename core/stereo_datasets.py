@@ -27,6 +27,97 @@ def check_lists_same_len(lists):
     else:
         return True
 
+def vary_ambient_light(img, weight_darker, is_left, date):
+    dark_level = {
+        "left":{
+            "day": {
+                6:72.4 ,
+                7:74.2 ,
+                8:72.8 ,
+                9:57.2 ,
+                10:73.3
+            },
+            "night":{
+                6:74.7,
+                7:79.6,
+                8:73.7,
+                9:58.7,
+                10:74.3
+            }
+        },
+        "right":{
+            "day": {
+                6:81.9,
+                7:81.8,
+                8:81.4,
+                9:57.6,
+                10:68.2 
+            },
+            "night":{
+                6:57.8,
+                7:41.8,
+                8:68.2,
+                9:61.4,
+                10:83.6
+            }        
+        }
+    }   
+    exposure = {
+        "day":{
+            6:21,
+            7:108,
+            8:161.7,
+            9:161.7,
+            10:161.7
+        },
+        "night":{
+            6:804.9,
+            7:1744.7,
+            8:323.4,
+            9:323.4,
+            10:323.4
+        }
+    }
+
+    #Assume order is 6 7 8 9 10
+
+    #2022-10-13_10-12-10
+    day = date.split("_")[-1]
+    hour = int(day.split("-")[0] )
+    assert(hour < 25 and hour > -1)
+    if hour > 8 and hour < 18 :
+        day_night = "day"
+    else:
+        day_night = "night"
+
+    left_right = "left" if is_left else "right"
+
+    img[:,:,0] -= (dark_level[left_right][day_night][6])*255/(2**10-1)
+    img[:,:,1] -= (dark_level[left_right][day_night][7])*255/(2**10-1)
+    img[:,:,2] -= (dark_level[left_right][day_night][8])*255/(2**10-1)
+    img[:,:,3] -= (dark_level[left_right][day_night][9])*255/(2**10-1)
+    img[:,:,4] -= (dark_level[left_right][day_night][10])*255/(2**10-1)
+
+    if random.random() > 0.7:
+        ambinet_light_active_6 = np.clip(img[:,:,0]*exposure[day_night][8]/exposure[day_night][6], 0, 255)
+        ambinet_light_active_7 = np.clip(img[:,:,1]*exposure[day_night][8]/exposure[day_night][7], 0, 255)
+        ambinet_light_active = (ambinet_light_active_6 +ambinet_light_active_7)/2.0
+
+        # cc = copy.deepcopy(np.clip(np.concatenate([img[:,:,i] for i in range(5)]+[ambinet_light_active_6],axis =1) , 0, 255).astype(np.uint8) )
+
+        img[:,:,0] -= weight_darker*img[:,:,0]
+        img[:,:,1] -= weight_darker*img[:,:,1]
+        img[:,:,2] -= weight_darker*ambinet_light_active
+        img[:,:,3] -= weight_darker*ambinet_light_active
+        img[:,:,4] -= weight_darker*ambinet_light_active
+
+        # ff = np.clip( np.concatenate([img[:,:,i] for i in range(5)]+[ambinet_light_active_7],axis =1) , 0, 255).astype(np.uint8) 
+        # plt.imshow(np.concatenate([cc,ff],axis = 0 ) )
+        # plt.show()
+
+    img = np.clip(img, 0, 255)
+    return img
+
 class StereoDataset(data.Dataset):
     def __init__(self, aug_params=None, sparse=False, reader=None, use_passive_gated = False, use_all_gated = False):
         self.augmentor = None
@@ -60,6 +151,7 @@ class StereoDataset(data.Dataset):
             img2 = np.array(img2).astype(np.uint8)[..., :3]
             img1 = torch.from_numpy(img1).permute(2, 0, 1).float()
             img2 = torch.from_numpy(img2).permute(2, 0, 1).float()
+            throw_err
             return img1, img2, self.extra_info[index]
 
         if not self.init_seed:
@@ -84,8 +176,20 @@ class StereoDataset(data.Dataset):
             img1 = np.stack([ frame_utils.read_gen(self.image_list[index][0][i]) for i in range(5) ], axis = -1 )
             img2 = np.stack([ frame_utils.read_gen(self.image_list[index][1][i]) for i in range(5) ], axis = -1 )
 
-        img1 = np.array(img1).astype(np.uint8)
-        img2 = np.array(img2).astype(np.uint8)
+        img1 = np.array(img1)#.astype(np.uint8)
+        img2 = np.array(img2)#.astype(np.uint8)
+
+        if self.use_all_gated : # Augment dark
+            img1 = img1.astype(np.float16)
+            img2 = img2.astype(np.float16)            
+            max_percentage_dark = 1
+            if  True:
+                date = self.image_list[index][0][0].split("202210_GatedStereoDatasetv3/")[-1]
+                date = date.split("/framegrabber/left/")[0]
+                weight_darker = (random.random()-0.5) *max_percentage_dark
+                img1 = vary_ambient_light(img1, weight_darker, is_left=True, date=date)
+                img2 = vary_ambient_light(img2, weight_darker, is_left=False, date=date)
+
 
         disp = np.array(disp).astype(np.float32)
 
@@ -357,6 +461,8 @@ class Gated(StereoDataset):
                         if (day,ind) in set_training : 
                             self.image_list += copy.deepcopy([ [image_list_left, image_list_right] ])
                             self.disparity_list += [ disp ]
+                        else:
+                            pass #print("ok giusto ", day,ind)
                 else: 
                     print("No exact match in dataset:", len(disp_list) ,  len(image1_list[0]) , len(image2_list[0]) )
 

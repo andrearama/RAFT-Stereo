@@ -48,7 +48,8 @@ def sequence_loss(flow_preds, flow_gt, valid, loss_gamma=0.9, max_flow=700):
     assert not torch.isinf(flow_gt[valid.bool()]).any()
 
     for i in range(n_predictions):
-        assert not torch.isnan(flow_preds[i]).any() and not torch.isinf(flow_preds[i]).any()
+        assert not torch.isnan(flow_preds[i]).any() 
+        assert not torch.isinf(flow_preds[i]).any()
         # We adjust the loss_gamma so it is consistent for any number of RAFT-Stereo iterations
         adjusted_loss_gamma = loss_gamma**(15/(n_predictions - 1))
         i_weight = adjusted_loss_gamma**(n_predictions - i - 1)
